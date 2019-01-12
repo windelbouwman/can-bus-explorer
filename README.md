@@ -1,11 +1,12 @@
 
-This is a CAN bus utility to inspect the CAN bus.
+This is a set of utilities to inspect and debug the CAN bus. Via a graphical user
+interface you can gain insight into what is happening.
 
 Screenshot: TODO
 
 # Usage
 
-    $ python explorer.py
+    $ python explorer.py vcan0
 
 Or for some more low level utilities, such as candump and cansend:
 

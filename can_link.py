@@ -73,6 +73,7 @@ class SocketCanLink(CanInterface):
 
     def connect(self):
         self.sock = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
+        logger.info("Opening device %s", self.interface)
         self.sock.bind((self.interface,))
         # Spin receiver thread:
         self._running = True
@@ -82,6 +83,7 @@ class SocketCanLink(CanInterface):
         self.recv_thread.start()
 
     def disconnect(self):
+        logger.info("Closing can device")
         self.sock.close()
         self._running = False
         self.recv_thread.join()
@@ -116,10 +118,20 @@ class CanMessage:
     @property
     def fancytimestamp(self):
         if self.timestamp is None:
-            return ''
+            return ""
         else:
             # return self.timestamp.strftime('%A %d %B %Y %H:%M:%S.%f')
-            return self.timestamp.strftime('%H:%M:%S.%f')
+            return self.timestamp.strftime("%H:%M:%S.%f")
+
+    @property
+    def age(self):
+        if self.timestamp is None:
+            age = 0.0
+        else:
+            now = datetime.datetime.now()
+            age = now - self.timestamp
+            age = age.total_seconds()
+        return age
 
     @property
     def hexdata(self):
