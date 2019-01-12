@@ -53,7 +53,7 @@ class DummyCanLink(CanInterface):
         pass
 
     def send(self, message):
-        timestamp = datetime.datetime.now().ctime()
+        timestamp = datetime.datetime.now()
         new_message = CanMessage(message.id, message.data, timestamp=timestamp)
         self._recv(new_message)
 
@@ -99,7 +99,7 @@ class SocketCanLink(CanInterface):
             can_id, size, data = struct.unpack(self.fmt, data)
             can_id &= socket.CAN_EFF_MASK
             data = data[:size]
-            timestamp = datetime.datetime.now().ctime()
+            timestamp = datetime.datetime.now()
             message = CanMessage(can_id, data, timestamp=timestamp)
             self._recv(message)
         logger.info("Receiver thread finished")
@@ -114,12 +114,20 @@ class CanMessage:
         self.timestamp = timestamp
 
     @property
+    def fancytimestamp(self):
+        if self.timestamp is None:
+            return ''
+        else:
+            # return self.timestamp.strftime('%A %d %B %Y %H:%M:%S.%f')
+            return self.timestamp.strftime('%H:%M:%S.%f')
+
+    @property
     def hexdata(self):
         """ Return shiny hexadecimal data """
         b = ["{:02X}".format(b) for b in self.data]
         return " ".join(b)
 
     def __str__(self):
-        return "CAN msg ID={:X} LEN={} DATA={}".format(
-            self.id, len(self.data), self.hexdata
+        return "CAN msg ID={:X} LEN={} DATA={} {}".format(
+            self.id, len(self.data), self.hexdata, self.fancytimestamp
         )

@@ -5,7 +5,8 @@ A PyQt5 based CAN bus explorer utility.
 """
 
 import sys
-from PyQt5 import QtCore, QtWidgets
+import datetime
+from PyQt5 import QtCore, QtWidgets, QtGui
 from PyQt5.QtCore import Qt
 import logging
 from can_link import CanMessage, SocketCanLink
@@ -30,7 +31,7 @@ class MessageLogModel(QtCore.QAbstractTableModel):
 
         # List of title, property, column width tuples:
         self._headers = [
-            ("Time of msg", "timestamp", 100),
+            ("Time of msg", "fancytimestamp", 100),
             ("ID", "id", 30),
             ("DATA bytes", "hexdata", 80),
         ]
@@ -71,13 +72,37 @@ class MessageLogModel(QtCore.QAbstractTableModel):
         if not index.isValid():
             return
 
+        row = index.row()
+        column = index.column()
+        message = self._messages[row]
+
         if role == Qt.DisplayRole:
-            row = index.row()
-            column = index.column()
             prop_name = self._headers[column][1]
-            message = self._messages[row]
             value = str(getattr(message, prop_name))
             return value
+        elif role == Qt.BackgroundRole:
+            if message.timestamp is None:
+                # No timestamp, take some fixed color:
+                color = QtGui.QColor(255, 255, 255)
+            else:
+                now = datetime.datetime.now()
+                age = now - message.timestamp
+                age = age.total_seconds()
+                color = self.age_to_color(age)
+
+            return QtGui.QBrush(color)
+
+    def age_to_color(self, age):
+        fade_time = 2.0
+        if age > fade_time:
+            percent = 1.0
+        else:
+            percent = age / fade_time
+        r = 255 * percent
+        g = 255 * percent
+        b = 255
+        color = QtGui.QColor(r, g, b)
+        return color
 
 
 class CanConnection(QtCore.QObject):
@@ -270,11 +295,20 @@ class CanExplorer(QtWidgets.QMainWindow):
 
         self.setWindowTitle("CAN bus explorer")
 
+
+        self.file_menu = self.menuBar().addMenu('File')
+        self.quit_action = QtWidgets.QAction('Quit')
+        self.quit_action.triggered.connect(self.close)
+        self.file_menu.addAction(self.quit_action)
+
+        self.view_menu = self.menuBar().addMenu('View')
+
         # Connection dock widget:
         self.connection_widget = ConnectionWidget(self.can_connection)
         self.connection_dock_widget = QtWidgets.QDockWidget("Connection")
         self.connection_dock_widget.setWidget(self.connection_widget)
         self.addDockWidget(Qt.TopDockWidgetArea, self.connection_dock_widget)
+        self.view_menu.addAction(self.connection_dock_widget.toggleViewAction())
 
         # Message sending widget dock:
         self.send_message_widget = SendMessageWidget(self.can_connection)
@@ -283,12 +317,14 @@ class CanExplorer(QtWidgets.QMainWindow):
         self.addDockWidget(
             Qt.DockWidgetArea.TopDockWidgetArea, self.send_message_dock_widget
         )
+        self.view_menu.addAction(self.send_message_dock_widget.toggleViewAction())
 
         # Add message log dock widget:
         self.message_log_widget = MessageLogWidget(self.can_connection)
         self.message_log_dock_widget = QtWidgets.QDockWidget("Messages")
         self.message_log_dock_widget.setWidget(self.message_log_widget)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.message_log_dock_widget)
+        self.view_menu.addAction(self.message_log_dock_widget.toggleViewAction())
 
         # Add menu:
         self.help_menu = self.menuBar().addMenu("Help")
