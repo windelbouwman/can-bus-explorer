@@ -4,36 +4,13 @@ A PyQt5 based CAN bus explorer utility.
 
 """
 
-import datetime
 import sys
 from PyQt5 import QtCore, QtWidgets
 from PyQt5.QtCore import Qt
-import struct
 import logging
-import socket
-import threading
+from can_link import CanMessage, SocketCanLink
 
 logger = logging.getLogger("can-explorer")
-
-
-class CanMessage:
-    """ Represents a single can message. """
-
-    def __init__(self, id, data, timestamp=None):
-        self.id = id
-        self.data = data
-        self.timestamp = timestamp
-
-    @property
-    def hexdata(self):
-        """ Return shiny hexadecimal data """
-        b = ["{:02X}".format(b) for b in self.data]
-        return " ".join(b)
-
-    def __str__(self):
-        return "CAN msg ID={:X} LEN={} DATA={}".format(
-            self.id, len(self.data), self.hexdata
-        )
 
 
 class MessageLogModel(QtCore.QAbstractTableModel):
@@ -103,87 +80,6 @@ class MessageLogModel(QtCore.QAbstractTableModel):
             return value
 
 
-class CanInterface:
-    def __init__(self):
-        self._recv_subscribers = []
-
-    def attach_recv_callback(self, callback):
-        self._recv_subscribers.append(callback)
-
-    def _recv(self, message):
-        for callback in self._recv_subscribers:
-            callback(message)
-
-    def connect(self):
-        raise NotImplementedError()
-
-    def disconnect(self):
-        raise NotImplementedError()
-
-    def send(self, message):
-        raise NotImplementedError()
-
-
-class DummyCanLink(CanInterface):
-    """ Simple dummy which does local echo. """
-
-    def connect(self):
-        pass
-
-    def disconnect(self):
-        pass
-
-    def send(self, message):
-        timestamp = datetime.datetime.now().ctime()
-        new_message = CanMessage(message.id, message.data, timestamp=timestamp)
-        self._recv(new_message)
-
-
-class SocketCanLink(CanInterface):
-    """ Socket can interface.
-
-    Links:
-    http://www.bencz.com/hacks/2016/07/10/python-and-socketcan/
-    """
-
-    fmt = "<IB3x8s"
-
-    def connect(self):
-        interface = "vcan0"
-        self.sock = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
-        self.sock.bind((interface,))
-        # Spin receiver thread:
-        self._running = True
-        self.recv_thread = threading.Thread(
-            target=self.recv_process, name="socketcan-recv"
-        )
-        self.recv_thread.start()
-
-    def disconnect(self):
-        self.sock.close()
-        self._running = False
-        self.recv_thread.join()
-
-    def send(self, message):
-        data = struct.pack(self.fmt, message.id, len(message.data), message.data)
-        self.sock.send(data)
-
-    def recv_process(self):
-        logger.info("Receiver thread started")
-        while self._running:
-            # Block:
-            data = self.sock.recv(16)
-            assert len(data) == 16
-            can_id, size, data = struct.unpack(self.fmt, data)
-            can_id &= socket.CAN_EFF_MASK
-            data = data[:size]
-            timestamp = datetime.datetime.now().ctime()
-            message = CanMessage(can_id, data, timestamp=timestamp)
-            print(message)
-            self._recv(message)
-        logger.info("Receiver thread finished")
-
-
 class CanConnection(QtCore.QObject):
     """ A can connection hub.
 
@@ -201,7 +97,7 @@ class CanConnection(QtCore.QObject):
         self._connected = False
 
     @QtCore.pyqtProperty(bool)
-    def is_connected(self):
+    def connected(self):
         return self._connected
 
     def _set_connected(self, state):
@@ -239,14 +135,14 @@ class ConnectionWidget(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout()
 
         self.open_button = QtWidgets.QPushButton("Open")
-        self.open_button.setEnabled(not can_connection.is_connected)
+        self.open_button.setEnabled(not can_connection.connected)
         can_connection.connection_closed.connect(self.open_button.setEnabled)
         self.open_button.clicked.connect(self.on_open)
         layout.addWidget(self.open_button)
 
         self.close_button = QtWidgets.QPushButton("Close")
         self.close_button.clicked.connect(self.on_close)
-        self.close_button.setEnabled(can_connection.is_connected)
+        self.close_button.setEnabled(can_connection.connected)
         can_connection.connection_opened.connect(self.close_button.setEnabled)
         layout.addWidget(self.close_button)
         layout.addStretch()
@@ -266,7 +162,7 @@ class SendMessageWidget(QtWidgets.QWidget):
         super().__init__()
         self.can_connection = can_connection
         can_connection.connection_opened.connect(self.setEnabled)
-        self.setEnabled(can_connection.is_connected)
+        self.setEnabled(can_connection.connected)
         layout = QtWidgets.QVBoxLayout()
 
         # Message construction panel:
@@ -367,8 +263,9 @@ class CanExplorer(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
 
+        interface = "vcan0"
         # can_link = DummyCanLink()
-        can_link = SocketCanLink()
+        can_link = SocketCanLink(interface)
         self.can_connection = CanConnection(can_link)
 
         self.setWindowTitle("CAN bus explorer")
@@ -392,6 +289,35 @@ class CanExplorer(QtWidgets.QMainWindow):
         self.message_log_dock_widget = QtWidgets.QDockWidget("Messages")
         self.message_log_dock_widget.setWidget(self.message_log_widget)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.message_log_dock_widget)
+
+        # Add menu:
+        self.help_menu = self.menuBar().addMenu("Help")
+        self.about_action = QtWidgets.QAction("About")
+        self.about_action.triggered.connect(self.about)
+        self.help_menu.addAction(self.about_action)
+
+        self.aboutQtAction = QtWidgets.QAction("About Qt")
+        self.aboutQtAction.triggered.connect(self.about_qt)
+        self.help_menu.addAction(self.aboutQtAction)
+
+    def about(self):
+        about_text = """
+        <h1>CAN bus explorer</h1>
+
+        <p>Created by:
+        <ul>
+        <li>Windel Bouwman</li>
+        </ul>
+        </p>
+
+        <p>
+        See <a href="https://github.com/windelbouwman/can-bus-explorer">the website</a>
+        </p>
+        """
+        QtWidgets.QMessageBox.about(self, "About", about_text)
+
+    def about_qt(self):
+        QtWidgets.QApplication.instance().aboutQt()
 
 
 def main():
