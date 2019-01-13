@@ -6,13 +6,18 @@ Screenshot: TODO
 
 # Usage
 
-    $ python explorer.py vcan0
+    $ python explorer.py socketcan:vcan0
 
 Or for some more low level utilities, such as candump and cansend:
 
-    $ python cansend.py vcan0 88 deadbeef
+    $ python cansend.py socketcan:vcan0 88 deadbeef
 
-    $ python candump.py vcan0
+    $ python candump.py socketcan:vcan0
+
+For the purpose of pure bus traffic, a sine wave generator script was made.
+Caution: this creates pretty random bus traffic!
+
+    $ python sinewave.py --freq 10 socketcan:vcan0
 
 # Testing
 

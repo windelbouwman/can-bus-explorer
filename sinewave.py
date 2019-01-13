@@ -2,7 +2,7 @@
 """
 
 import argparse
-from can_link import SocketCanLink, CanMessage
+from can_link import make_can_link, CanMessage
 import struct
 import time
 import math
@@ -13,9 +13,10 @@ def main():
     parser.add_argument("interface")
     parser.add_argument("--can_id", default=1337, type=int)
     parser.add_argument("--freq", default=10, type=float)
+    # parser.add_argument('--sampletime', default=0.1, type=float)
     args = parser.parse_args()
 
-    can_link = SocketCanLink(args.interface)
+    can_link = make_can_link(args.interface)
     can_link.connect()
 
     can_id = args.can_id

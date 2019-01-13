@@ -2,7 +2,7 @@
 
 
 import argparse
-from can_link import SocketCanLink, CanMessage
+from can_link import make_can_link, CanMessage
 
 
 def main():
@@ -12,7 +12,7 @@ def main():
     parser.add_argument("data", help="data as hex text")
     args = parser.parse_args()
 
-    can_link = SocketCanLink(args.interface)
+    can_link = make_can_link(args.interface)
     can_link.connect()
 
     can_id = int(args.can_id, 16)

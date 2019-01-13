@@ -8,8 +8,31 @@ import threading
 import logging
 import queue
 
+import can_errors
 
 logger = logging.getLogger("can-explorer")
+
+
+def make_can_link(spec):
+    """ Create a can link given a specifier.
+
+    Example specifiers:
+    - socketcan:vcan0
+    - dummy
+    """
+    if ":" in spec:
+        driver, driver_args = spec.split(":", 1)
+    else:
+        driver = spec
+        driver_args = ""
+
+    if driver == "dummy":
+        can_link = DummyCanLink()
+    elif driver == "socketcan":
+        can_link = SocketCanLink(driver_args)
+    else:
+        raise ValueError("Invalid driver")
+    return can_link
 
 
 class CanInterface:
@@ -58,6 +81,9 @@ class DummyCanLink(CanInterface):
         self._recv(new_message)
 
 
+# See also: /usr/include/linux/can/error.h
+
+
 class SocketCanLink(CanInterface):
     """ Socket can interface.
 
@@ -99,11 +125,19 @@ class SocketCanLink(CanInterface):
             data = self.sock.recv(16)
             assert len(data) == 16
             can_id, size, data = struct.unpack(self.fmt, data)
-            can_id &= socket.CAN_EFF_MASK
             data = data[:size]
             timestamp = datetime.datetime.now()
-            message = CanMessage(can_id, data, timestamp=timestamp)
-            self._recv(message)
+
+            # Maybe we received an error frame:
+            if can_id & socket.CAN_ERR_FLAG:
+                message = CanMessage(can_id, data, timestamp=timestamp)
+                errors = message_to_errors(message)
+                print(errors)
+            else:
+                can_id &= socket.CAN_EFF_MASK
+                message = CanMessage(can_id, data, timestamp=timestamp)
+                self._recv(message)
+
         logger.info("Receiver thread finished")
 
 
@@ -114,6 +148,11 @@ class CanMessage:
         self.id = id
         self.data = data
         self.timestamp = timestamp
+
+    def bitsize(self):
+        """ Give some metrics for this message size. """
+        # TODO: this should be bit correct!
+        return len(self.data) * 8 + 11
 
     @property
     def fancytimestamp(self):

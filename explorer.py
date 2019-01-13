@@ -7,10 +7,25 @@ A PyQt5 based CAN bus explorer utility.
 import argparse
 import sys
 import datetime
-from PyQt5 import QtCore, QtWidgets, QtGui
-from PyQt5.QtCore import Qt
+
+use_pyqt = False
+
+if use_pyqt:
+    from PyQt5 import QtCore, QtWidgets, QtGui
+    from PyQt5.QtCore import Qt
+    from PyQt5.QtCore import pyqtSignal as Signal
+
+    # from PyQt5.QtCore import pyqtProperty as Property
+else:
+    from PySide2 import QtCore, QtWidgets, QtGui
+    from PySide2.QtCore import Qt
+    from PySide2.QtCore import Signal
+
 import logging
-from can_link import CanMessage, SocketCanLink
+from can_link import CanMessage, make_can_link
+
+if not use_pyqt:
+    from busload import BusLoadWidget
 
 logger = logging.getLogger("can-explorer")
 
@@ -63,12 +78,16 @@ class AbstractMessageModel(QtCore.QAbstractTableModel):
         raise NotImplementedError()
 
     def _update_color(self):
+        roles = [Qt.BackgroundRole]
         for row in range(self.get_row_count()):
             message = self.get_message(row)
             if message.age < self.FADE_TIME:
-                from_index = self.index(row, 0)
-                to_index = self.index(row, len(self._headers) - 1)
-                self.dataChanged.emit(from_index, to_index)
+                self.row_changed(row, roles)
+
+    def row_changed(self, row, roles):
+        from_index = self.index(row, 0)
+        to_index = self.index(row, len(self._headers) - 1)
+        self.dataChanged.emit(from_index, to_index, roles)
 
     def data(self, index, role):
         if not index.isValid():
@@ -117,9 +136,7 @@ class LastMessageModel(AbstractMessageModel):
             logger.debug("Update message in model %s", message)
             row = self._messages[message.id][0]
             self._messages[message.id] = (row, message)
-            from_index = self.index(row, 0)
-            to_index = self.index(row, len(self._headers) - 1)
-            self.dataChanged.emit(from_index, to_index)
+            self.row_changed(row, [Qt.DisplayRole])
         else:
             logger.debug("Add message in model %s", message)
             parent = QtCore.QModelIndex()
@@ -181,9 +198,9 @@ class CanConnection(QtCore.QObject):
     Use this class to communicate over CAN.
     """
 
-    connection_opened = QtCore.pyqtSignal(bool)
-    connection_closed = QtCore.pyqtSignal(bool)
-    message_received = QtCore.pyqtSignal(CanMessage)
+    connection_opened = Signal(bool)
+    connection_closed = Signal(bool)
+    message_received = Signal(CanMessage)
 
     def __init__(self, can_link):
         super().__init__()
@@ -191,7 +208,7 @@ class CanConnection(QtCore.QObject):
         self.can_link.attach_recv_callback(self._on_message)
         self._connected = False
 
-    @QtCore.pyqtProperty(bool)
+    @property
     def connected(self):
         return self._connected
 
@@ -355,7 +372,7 @@ class CanExplorer(QtWidgets.QMainWindow):
 
     def __init__(self, can_connection):
         super().__init__()
-        self.settings = QtCore.QSettings('lcfos', 'can-bus-explorer')
+        self.settings = QtCore.QSettings("lcfos", "can-bus-explorer")
 
         self.can_connection = can_connection
         self.setWindowTitle("CAN bus explorer")
@@ -370,6 +387,7 @@ class CanExplorer(QtWidgets.QMainWindow):
         # Connection dock widget:
         self.connection_widget = ConnectionWidget(self.can_connection)
         self.connection_dock_widget = QtWidgets.QDockWidget("Connection")
+        self.connection_dock_widget.setObjectName("ConnectionDock")
         self.connection_dock_widget.setWidget(self.connection_widget)
         self.addDockWidget(Qt.TopDockWidgetArea, self.connection_dock_widget)
         self.view_menu.addAction(self.connection_dock_widget.toggleViewAction())
@@ -377,6 +395,7 @@ class CanExplorer(QtWidgets.QMainWindow):
         # Message sending widget dock:
         self.send_message_widget = SendMessageWidget(self.can_connection)
         self.send_message_dock_widget = QtWidgets.QDockWidget("Send")
+        self.send_message_dock_widget.setObjectName("SendMessageDock")
         self.send_message_dock_widget.setWidget(self.send_message_widget)
         self.addDockWidget(
             Qt.DockWidgetArea.TopDockWidgetArea, self.send_message_dock_widget
@@ -387,6 +406,7 @@ class CanExplorer(QtWidgets.QMainWindow):
         self.message_log_model = MessageLogModel(self.can_connection)
         self.message_log_widget = MessageTableWidget(self.message_log_model)
         self.message_log_dock_widget = QtWidgets.QDockWidget("Messages")
+        self.message_log_dock_widget.setObjectName("MessageLogDock")
         self.message_log_dock_widget.setWidget(self.message_log_widget)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.message_log_dock_widget)
         self.view_menu.addAction(self.message_log_dock_widget.toggleViewAction())
@@ -395,9 +415,19 @@ class CanExplorer(QtWidgets.QMainWindow):
         self.last_message_model = LastMessageModel(self.can_connection)
         self.last_message_widget = MessageTableWidget(self.last_message_model)
         self.last_message_dock_widget = QtWidgets.QDockWidget("Messages by id")
+        self.last_message_dock_widget.setObjectName("MessageByIdDock")
         self.last_message_dock_widget.setWidget(self.last_message_widget)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.last_message_dock_widget)
         self.view_menu.addAction(self.last_message_dock_widget.toggleViewAction())
+
+        if not use_pyqt:
+            # Busload graph:
+            self.busload_widget = BusLoadWidget(self.can_connection)
+            self.busload_dock_widget = QtWidgets.QDockWidget("Bus load")
+            self.busload_dock_widget.setObjectName("BusLoadDock")
+            self.busload_dock_widget.setWidget(self.busload_widget)
+            self.addDockWidget(Qt.BottomDockWidgetArea, self.busload_dock_widget)
+            self.view_menu.addAction(self.busload_dock_widget.toggleViewAction())
 
         # Add menu:
         self.help_menu = self.menuBar().addMenu("Help")
@@ -410,14 +440,15 @@ class CanExplorer(QtWidgets.QMainWindow):
         self.help_menu.addAction(self.aboutQtAction)
 
         # Restore settings:
-        if self.settings.contains('mainWindowGeometry'):
-            self.restoreGeometry(self.settings.value('mainWindowGeometry'))
-        if self.settings.contains('mainWindowState'):
-            self.restoreState(self.settings.value('mainWindowState'))
+        if self.settings.contains("mainWindowGeometry"):
+            self.restoreGeometry(self.settings.value("mainWindowGeometry"))
+
+        if self.settings.contains("mainWindowState"):
+            self.restoreState(self.settings.value("mainWindowState"))
 
     def closeEvent(self, event):
-        self.settings.setValue('mainWindowGeometry', self.saveGeometry())
-        self.settings.setValue('mainWindowState', self.saveState())
+        self.settings.setValue("mainWindowGeometry", self.saveGeometry())
+        self.settings.setValue("mainWindowState", self.saveState())
         super().closeEvent(event)
 
     def about(self):
@@ -443,7 +474,9 @@ class CanExplorer(QtWidgets.QMainWindow):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--verbose", "-v", action="count", default=0)
-    parser.add_argument('interface', help='Specify the interface, for example can0')
+    parser.add_argument(
+        "interface", help="Specify the interface, for example socketcan:can0"
+    )
     args = parser.parse_args()
 
     logformat = "%(asctime)s | %(levelname)8s | %(name)10.10s | %(message)s"
@@ -453,10 +486,10 @@ def main():
     else:
         level = logging.INFO
     logging.basicConfig(level=level, format=logformat)
-    app = QtWidgets.QApplication(sys.argv)
+    can_link = make_can_link(args.interface)
 
-    # can_link = DummyCanLink()
-    can_link = SocketCanLink(args.interface)
+    # Qt part:
+    app = QtWidgets.QApplication(sys.argv)
     can_connection = CanConnection(can_link)
     main_window = CanExplorer(can_connection)
     main_window.show()
